@@ -89,6 +89,7 @@ class QemuSim(sim_host.HostSim):
         json_obj = super().toJSON()
         # disks is created upon invocation of "prepare", hence we do not need to serialize it
         json_obj["kernel_path"] = self.kernel_path
+        json_obj["initrd"] = self.initrd
         json_obj["qemu_img_exec"] = self._qemu_img_exec
         return json_obj
 
@@ -96,6 +97,7 @@ class QemuSim(sim_host.HostSim):
     def fromJSON(cls, simulation: sim_base.Simulation, json_obj: dict) -> tpe.Self:
         instance = super().fromJSON(simulation, json_obj)
         instance.kernel_path = utils_base.get_json_attr_top(json_obj, "kernel_path")
+        instance.initrd = utils_base.get_json_attr_top(json_obj, "initrd") 
         instance._qemu_img_exec = utils_base.get_json_attr_top(json_obj, "qemu_img_exec")
         return instance
 
