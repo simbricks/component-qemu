@@ -65,7 +65,8 @@ qemu/ready: qemu
 			--extra-cflags="$(CFLAGS) -I$(SIMBRICKS_INC_DIR)" \
 			--extra-ldflags="$(LDFLAGS) --sysroot=$(CONDA_BUILD_SYSROOT) -L$(SIMBRICKS_LIB_DIR) -lstdc++ -latomic" \
 			--enable-simbricks \
-			--enable-simbricks-pci && \
+			--enable-simbricks-pci \
+			--enable-simbricks-eth && \
 	  $(MAKE)
 	touch $@
 
