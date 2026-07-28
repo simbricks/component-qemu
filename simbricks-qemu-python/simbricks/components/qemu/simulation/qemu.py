@@ -33,9 +33,11 @@ from simbricks.orchestration.simulation import base as sim_base
 from simbricks.orchestration.simulation import host as sim_host
 from simbricks.orchestration.system import host as sys_host
 from simbricks.orchestration.system import pcie as sys_pcie
+from simbricks.orchestration.system import nic as sys_nic
 from simbricks.orchestration.system import disk_images
 from simbricks.orchestration.instantiation import socket as inst_socket
 from simbricks.utils import base as utils_base
+from simbricks.utils import eth as utils_eth
 
 
 class QemuSim(sim_host.HostSim):
@@ -46,6 +48,8 @@ class QemuSim(sim_host.HostSim):
             executable="qemu-system-x86_64",
         )
         self.name = f"QemuSim-{self._id}"
+        self.kernel_path = "global_input/images/bzImage"
+        self.initrd: str | None = None
         self._qemu_img_exec: str = "qemu-img"
 
     def resreq_cores(self) -> int:
@@ -54,18 +58,44 @@ class QemuSim(sim_host.HostSim):
     def resreq_mem(self) -> int:
         return 1024
 
+    def _check_nic_and_host_specs(self) -> None:
+        full_sys_hosts = self.filter_components_by_type(ty=sys_host.BaseLinuxHost)
+        nic_spes = self.filter_components_by_type(ty=sys_nic.SimplePCIeNIC)
+        if len(full_sys_hosts) != 1 and len(nic_spes) > 1:
+            raise RuntimeError(
+                "QEMU only supports simulating a single NIC together with its connected host"
+            )
+
+    def supported_socket_types(self, interface: system.Interface) -> set[inst_socket.SockType]:
+        self._check_nic_and_host_specs()
+        if len(self.filter_components_by_type(ty=sys_nic.SimplePCIeNIC)) > 0:
+            return {inst_socket.SockType.LISTEN}
+        else:
+            return {inst_socket.SockType.CONNECT}
+
+    def add(self, host_or_nic: sys_host.Host | sys_nic.SimplePCIeNIC):
+        match host_or_nic:
+            case sys_nic.SimplePCIeNIC() | sys_host.Host():
+                super().add(host_or_nic)
+            case _:
+                raise Exception(
+                    f"QEMU does not support simulating component with type {type(host_or_nic)}"
+                )
+
     def supported_image_formats(self) -> list[str]:
         return ["qcow2", "raw"]
 
     def toJSON(self) -> dict:
         json_obj = super().toJSON()
         # disks is created upon invocation of "prepare", hence we do not need to serialize it
+        json_obj["kernel_path"] = self.kernel_path
         json_obj["qemu_img_exec"] = self._qemu_img_exec
         return json_obj
 
     @classmethod
     def fromJSON(cls, simulation: sim_base.Simulation, json_obj: dict) -> tpe.Self:
         instance = super().fromJSON(simulation, json_obj)
+        instance.kernel_path = utils_base.get_json_attr_top(json_obj, "kernel_path")
         instance._qemu_img_exec = utils_base.get_json_attr_top(json_obj, "qemu_img_exec")
         return instance
 
@@ -121,8 +151,11 @@ class QemuSim(sim_host.HostSim):
         cmd = (
             f"{self._executable} -machine q35{accel} -serial mon:stdio "
             "-cpu Skylake-Server -display none -nic none "
-            f"-kernel {inst.env.repo_base('images/bzImage')} "
+            f"-kernel {inst.env.work_dir_or_abs(self.kernel_path, True)} "
         )
+
+        if self.initrd is not None:
+            cmd += f" -initrd {inst.env.work_dir_or_abs(self.initrd, True)} "
 
         full_sys_hosts = self.filter_components_by_type(ty=sys_host.BaseLinuxHost)
         if len(full_sys_hosts) != 1:
@@ -156,23 +189,61 @@ class QemuSim(sim_host.HostSim):
 
             cmd += f" -icount shift={shift},sleep=off "
 
-        fsh_interfaces = host_spec.interfaces()
-        pci_interfaces = system.Interface.filter_by_type(
-            interfaces=fsh_interfaces, ty=sys_pcie.PCIeHostInterface
-        )
-        for inf in pci_interfaces:
-            assert(len(self.get_channels()) > 0)
-            socket = inst.get_socket(interface=inf)
-            if socket is None:
-                continue
-            assert socket._type is inst_socket.SockType.CONNECT
-            cmd += f"-device simbricks-pci,socket={socket._path}"
-            if sync:
-                cmd += ",sync=on"
-                cmd += f",pci-latency={latency}"
-                cmd += f",sync-period={period}"
-            else:
-                cmd += ",sync=off"
-            cmd += " "
+        self._check_nic_and_host_specs()
 
-        return cmd
+        nic_spes = self.filter_components_by_type(ty=sys_nic.SimplePCIeNIC)
+        if len(nic_spes) == 1:
+            """
+            simulate host + NIC -> ethernet adapter
+            """
+            nic_spec = nic_spes[0]
+
+            # TODO: assert that NIC and host spec are directly connected
+
+            socket = inst.get_socket(interface=nic_spec._eth_if)
+            assert socket is not None and socket._type == inst_socket.SockType.LISTEN
+            params_url = self.get_parameters_url(
+                inst, socket, sync=sync, latency=latency, sync_period=period
+            )
+
+            nic_cmd = ""
+            match nic_spec:
+                case sys_nic.VirtIONic():
+                    nic_cmd = "virtio-net-pci,ioeventfd=off"
+                case _:
+                    raise RuntimeError(
+                        f"Currently only NICs of type VirtIONic are supported. You passed: {type(nic_spec)}"
+                    )
+
+            # TODO: put MAC addresses in specification objects
+            mac = utils_eth.random_mac()
+
+            cmd += f"-device {nic_cmd},netdev=simnet0,mac={mac} -netdev simbricks-eth,id=simnet0,sock-path={params_url} "
+
+            # if we simulate a host with its NIC in a single instance, we do not expose the pci interface below
+            return cmd
+
+        else:
+            """
+            simulate host only -> pcie adapter
+            """
+            fsh_interfaces = host_spec.interfaces()
+            pci_interfaces = system.Interface.filter_by_type(
+                interfaces=fsh_interfaces, ty=sys_pcie.PCIeHostInterface
+            )
+            for inf in pci_interfaces:
+                assert len(self.get_channels()) > 0
+                socket = inst.get_socket(interface=inf)
+                if socket is None:
+                    continue
+                assert socket._type is inst_socket.SockType.CONNECT
+                cmd += f"-device simbricks-pci,socket={socket._path}"
+                if sync:
+                    cmd += ",sync=on"
+                    cmd += f",pci-latency={latency}"
+                    cmd += f",sync-period={period}"
+                else:
+                    cmd += ",sync=off"
+                cmd += " "
+
+            return cmd
