@@ -28,8 +28,6 @@ source:
   # Build from the repo root, which holds the top-level Makefile and the qemu/
   # submodule with the QEMU C sources.
   path: ../../
-  patches:
-    - fix-typedef-object-c.patch
 
 build:
   number: 0
