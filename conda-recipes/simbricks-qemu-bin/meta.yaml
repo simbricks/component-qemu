@@ -45,6 +45,8 @@ requirements:
     - bison
     - python
     - setuptools
+    - rust
+    - wheel
 
   host:
     - simbricks-lib >=0.4.2
@@ -61,6 +63,7 @@ requirements:
     - lzo
     - ncurses
     - libiconv
+    - libslirp
 
   run:
     # Pull in the SimBricks QEMU python integration so that installing the
