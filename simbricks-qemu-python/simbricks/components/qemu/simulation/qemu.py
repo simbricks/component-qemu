@@ -283,6 +283,12 @@ class QemuSim(sim_host.HostSim):
                     continue
                 assert socket._type is inst_socket.SockType.CONNECT
                 cmd += f"-device simbricks-pci,socket={socket._path}"
+                # TODO: this should be a proper attribute of a PCIe device
+                # component class in the base orchestration framework, instead
+                # of an opaque parameter.
+                dev_spec = inf.get_opposing_interface().component
+                if dev_spec.parameters.get("pcie", False):
+                    cmd += ",pcie=on"
                 if sync:
                     cmd += ",sync=on"
                     cmd += f",pci-latency={latency}"
