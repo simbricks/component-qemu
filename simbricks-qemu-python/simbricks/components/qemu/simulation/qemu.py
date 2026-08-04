@@ -48,6 +48,20 @@ class QemuSim(sim_host.HostSim):
             executable="qemu-system-x86_64",
         )
         self.name = f"QemuSim-{self._id}"
+        self.machine: str | None = "q35"
+        """
+        Optionally define the machine type. 
+        The above will be passed as '-machine q35' to QEMU.
+
+        If set to None, no '-machine' option is passed.
+        """
+        self.accel: list[str] = ["kvm", "tcg"]
+        """
+        Define the virtualization accelerator. 
+        Each flag will be appended with a separate -accel parameter.
+
+        The above will become '-accel kvm -accel tcg'.
+        """
         self.kernel_path: str | None = None
         self.initrd: str | None = None
         self._qemu_img_exec: str = "qemu-img"
@@ -87,6 +101,9 @@ class QemuSim(sim_host.HostSim):
 
     def toJSON(self) -> dict:
         json_obj = super().toJSON()
+        if self.machine:
+            json_obj["machine"] = self.machine
+        json_obj["accel"] = utils_base.list_tuple_to_json(self.accel)
         # disks is created upon invocation of "prepare", hence we do not need to serialize it
         if self.kernel_path:
             json_obj["kernel_path"] = self.kernel_path
@@ -98,6 +115,10 @@ class QemuSim(sim_host.HostSim):
     @classmethod
     def fromJSON(cls, simulation: sim_base.Simulation, json_obj: dict) -> tpe.Self:
         instance = super().fromJSON(simulation, json_obj)
+        instance.machine = utils_base.get_json_attr_top_or_none(json_obj, "machine")
+        instance.accel = utils_base.json_array_to_list(
+            utils_base.get_json_attr_top(json_obj, "accel")
+        )
         instance.kernel_path = utils_base.get_json_attr_top_or_none(json_obj, "kernel_path")
         instance.initrd = utils_base.get_json_attr_top_or_none(json_obj, "initrd") 
         instance._qemu_img_exec = utils_base.get_json_attr_top(json_obj, "qemu_img_exec")
@@ -150,10 +171,15 @@ class QemuSim(sim_host.HostSim):
                 channels=self.get_channels()
             )
 
-        accel = ",accel=kvm:tcg" if not sync else ""
+        machine = f"-machine {self.machine}" if self.machine else ""
+
+        accel = ""
+        if not sync:
+            for accelerator in self.accel:
+                accel += f"-accel {accelerator} "
 
         cmd = (
-            f"{self._executable} -machine q35{accel} -serial mon:stdio "
+            f"{self._executable} {machine} {accel} -serial mon:stdio "
             "-cpu Skylake-Server -display none -nic none "
         )
 
