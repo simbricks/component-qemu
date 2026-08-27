@@ -136,7 +136,7 @@ class QemuSim(sim_host.HostSim):
                 f"{copy_path}"
             )
         ]
-        await inst._cmd_executor.exec_simulator_prepare_cmds(self, prep_cmds)
+        await inst.command_executor.exec_prepare_cmds(prep_cmds, self)
         return copy_path
 
     async def _make_raw_copy(
