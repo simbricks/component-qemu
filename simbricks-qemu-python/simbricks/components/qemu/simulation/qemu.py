@@ -291,8 +291,8 @@ class QemuSim(sim_host.HostSim):
                     cmd += ",pcie=on"
                 if sync:
                     cmd += ",sync=on"
-                    cmd += f",pci-latency={latency}"
-                    cmd += f",sync-period={period}"
+                    cmd += f",pci-latency={latency.picoseconds}"
+                    cmd += f",sync-period={period.picoseconds}"
                 else:
                     cmd += ",sync=off"
                 cmd += " "
